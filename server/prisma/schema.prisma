@@ -1,0 +1,627 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ================================
+// KORISNICI & AUTENTIKACIJA
+// ================================
+
+model User {
+  id                  String             @id @default(uuid())
+  email               String             @unique
+  password            String
+  firstName           String
+  lastName            String
+  university          String?
+  faculty             String?
+  yearOfStudy         Int?
+  profileImage        String?
+  bio                 String?
+
+  indexImage          String?
+  verificationStatus  VerificationStatus @default(UNVERIFIED)
+  verificationMethod  VerificationMethod?
+  verificationDocUrl  String?
+  verificationNote    String?
+
+  emailVerified       Boolean   @default(false)
+  verificationCode    String?
+  verificationCodeExp DateTime?
+
+  role                Role               @default(STUDENT)
+
+  // Relacije
+  shopItems           ShopItem[]
+  housingListings     HousingListing[]
+  tutorProfile        TutorProfile?
+  tutorBookings       TutorBooking[]     @relation("StudentBookings")
+  internshipReviews   InternshipReview[]
+  communityPosts      CommunityPost[]
+  communityComments   CommunityComment[]
+  eventAttendees      EventAttendee[]
+  sentMessages        Message[]          @relation("SentMessages")
+  conversations       ConversationParticipant[]
+  notifications       Notification[]
+
+  uploadedMaterials  Material[]       @relation("UploadedMaterials")
+  materialSaves      MaterialSave[]
+  materialFolders    MaterialFolder[]
+
+  studentJobs   StudentJob[]
+  sentConnections     Connection[] @relation("SentConnections")
+  receivedConnections Connection[] @relation("ReceivedConnections")
+  
+  activitiesReceived  Activity[] @relation("ActivityReceiver")
+  activitiesCaused    Activity[] @relation("ActivityActor")
+  
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum VerificationMethod {
+  STUDENT_EMAIL
+  DOCUMENT
+  REFERRAL
+}
+
+enum Role {
+  STUDENT
+  ADMIN
+}
+
+// ================================
+// STUDENT SHOP
+// ================================
+
+model ShopItem {
+  id          String        @id @default(uuid())
+  title       String
+  description String
+  price       Float
+  condition   ItemCondition
+  category    ShopCategory
+  images      String[]
+  isAvailable Boolean       @default(true)
+
+  sellerId    String
+  seller      User          @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
+
+enum ItemCondition {
+  NEW
+  LIKE_NEW
+  GOOD
+  FAIR
+}
+
+enum ShopCategory {
+  KNJIGE
+  SKRIPTA
+  ELEKTRONIKA
+  OPREMA
+  OSTALO
+}
+
+// ================================
+// STANOVI & SMJESTAJ
+// ================================
+
+model HousingListing {
+  id            String         @id @default(uuid())
+  title         String
+  description   String
+  price         Float
+  type          HousingType
+  city          String
+  municipality  String?
+  address       String?
+  latitude      Float?
+  longitude     Float?
+  roomCount     Int?
+  bathroomCount Int?
+  squareMeters  Float?
+  furnished     Boolean        @default(false)
+  utilitiesIncluded Boolean   @default(false)
+  images        String[]
+  contactPhone  String?
+  contactEmail  String?
+  isActive      Boolean        @default(true)
+
+  lookingForRoommate Boolean  @default(false)
+  roommateSpots      Int?
+
+  ownerId       String
+  owner         User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+enum HousingType {
+  APARTMAN
+  SOBA
+  GARSONJERA
+  CIMER
+}
+
+// ================================
+// INSTRUKCIJE
+// ================================
+
+model TutorProfile {
+  id          String         @id @default(uuid())
+  bio         String?
+  hourlyRate  Float
+  subjects    String[]
+  isActive    Boolean        @default(true)
+
+  userId      String         @unique
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  bookings    TutorBooking[]
+  reviews     TutorReview[]
+
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+}
+
+model TutorBooking {
+  id          String        @id @default(uuid())
+  subject     String
+  date        DateTime
+  duration    Int           // u minutima
+  status      BookingStatus @default(PENDING)
+  message     String?
+  price       Float
+
+  tutorId     String
+  tutor       TutorProfile  @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+
+  studentId   String
+  student     User          @relation("StudentBookings", fields: [studentId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
+
+model TutorReview {
+  id        String       @id @default(uuid())
+  rating    Int          // 1-5
+  comment   String?
+
+  tutorId   String
+  tutor     TutorProfile @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime     @default(now())
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+// ================================
+// MATERIJALI
+// ================================
+
+model MaterialFolder {
+  id          String           @id @default(uuid())
+  name        String
+  color       String           @default("#FF6B35")
+  icon        String           @default("📁")
+  isDefault   Boolean          @default(false)
+
+  userId      String
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  parentId    String?
+  parent      MaterialFolder?  @relation("FolderTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children    MaterialFolder[] @relation("FolderTree")
+
+  materials   Material[]
+
+  createdAt   DateTime         @default(now())
+  @@unique([userId, name, isDefault])
+}
+
+model Material {
+  id            String         @id @default(uuid())
+  title         String
+  description   String?
+  fileUrl       String
+  fileType      String
+  fileSize      Int?
+  subject       String?
+  professor     String?
+  year          Int?
+  isPublic      Boolean        @default(false)
+  faculty       String?
+  downloadCount Int            @default(0)
+  extractedText String?
+
+  uploaderId    String
+  uploader      User           @relation("UploadedMaterials", fields: [uploaderId], references: [id], onDelete: Cascade)
+
+  folderId      String?
+  folder        MaterialFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+
+  saves         MaterialSave[]
+
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+model MaterialSave {
+  id          String       @id @default(uuid())
+  source      SaveSource   @default(LIBRARY)
+
+  materialId  String
+  material    Material     @relation(fields: [materialId], references: [id], onDelete: Cascade)
+
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  folderId    String?
+
+  savedAt     DateTime     @default(now())
+
+  @@unique([materialId, userId])
+}
+
+enum SaveSource {
+  CHAT
+  LIBRARY
+  DIRECT
+}
+
+// ================================
+// FIRME & PRAKSE
+// ================================
+
+model Company {
+  id           String             @id @default(uuid())
+  name         String
+  description  String?
+  industry     String
+  website      String?
+  email        String?
+  phone        String?
+  address      String?
+  city         String?
+  logoUrl      String?
+  size         CompanySize?
+
+  internships  Internship[]
+  reviews      InternshipReview[]
+
+  averageRating Float?           @default(0)
+  reviewCount   Int              @default(0)
+
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+}
+
+model Internship {
+  id           String     @id @default(uuid())
+  title        String
+  description  String
+  requirements String?
+  duration     String?
+  isPaid       Boolean    @default(false)
+  salary       Float?
+  isActive     Boolean    @default(true)
+  deadline     DateTime?
+
+  companyId    String
+  company      Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+model InternshipReview {
+  id              String   @id @default(uuid())
+  rating          Int      // 1-5
+  title           String
+  comment         String
+  position        String?
+  year            Int?
+
+  // Detaljne ocjene
+  mentorshipRating    Int?
+  workEnvironmentRating Int?
+  learningRating      Int?
+  paymentRating       Int?
+
+  companyId       String
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  reviewerId      String
+  reviewer        User     @relation(fields: [reviewerId], references: [id], onDelete: Cascade)
+
+  createdAt       DateTime @default(now())
+}
+
+enum CompanySize {
+  SMALL       // 1-50
+  MEDIUM      // 51-200
+  LARGE       // 200+
+}
+
+// ================================
+// COMMUNITY & EVENTI
+// ================================
+
+model CommunityPost {
+  id        String             @id @default(uuid())
+  title     String?
+  content   String
+  category  PostCategory       @default(OSTALO)
+  images    String[]
+  isPinned  Boolean            @default(false)
+
+  authorId  String
+  author    User               @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  comments  CommunityComment[]
+
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+}
+
+model CommunityComment {
+  id        String        @id @default(uuid())
+  content   String
+
+  postId    String
+  post      CommunityPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  authorId  String
+  author    User          @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime      @default(now())
+}
+
+enum PostCategory {
+  OBAVJESTENJE
+  PITANJE
+  DISKUSIJA
+  OGLAS
+  OSTALO
+}
+
+model Event {
+  id          String          @id @default(uuid())
+  title       String
+  description String
+  location    String?
+  isOnline    Boolean         @default(false)
+  eventDate   DateTime
+  imageUrl    String?
+  maxAttendees Int?
+
+  attendees   EventAttendee[]
+
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
+
+model EventAttendee {
+  id       String @id @default(uuid())
+  eventId  String
+  event    Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+}
+
+// ================================
+// CHAT
+// ================================
+
+model Conversation {
+  id           String                    @id @default(uuid())
+  isGroup      Boolean                   @default(false)
+  name         String?
+  groupImage   String?
+  adminId      String?
+
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt              
+}
+
+model ConversationParticipant {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  content        String
+  fileUrl        String?
+  fileType       String?
+
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  senderId       String
+  sender         User         @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+
+  createdAt      DateTime     @default(now())
+}
+
+model ConversationRead {
+  id             String   @id @default(uuid())
+  conversationId String
+  userId         String
+  lastReadAt     DateTime @default(now())
+
+  @@unique([conversationId, userId])
+}
+
+// ================================
+// NOTIFIKACIJE
+// ================================
+
+model Notification {
+  id        String           @id @default(uuid())
+  type      NotificationType
+  message   String
+  isRead    Boolean          @default(false)
+  link      String?
+
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime         @default(now())
+}
+
+enum NotificationType {
+  BOOKING_REQUEST
+  BOOKING_CONFIRMED
+  BOOKING_CANCELLED
+  NEW_MESSAGE
+  VERIFICATION_APPROVED
+  VERIFICATION_REJECTED
+  NEW_REVIEW
+  GENERAL
+}
+
+
+
+//CONNECTION
+
+model Connection {
+  id          String           @id @default(uuid())
+  status      ConnectionStatus @default(PENDING)
+
+  senderId    String
+  sender      User             @relation("SentConnections", fields: [senderId], references: [id], onDelete: Cascade)
+
+  receiverId  String
+  receiver    User             @relation("ReceivedConnections", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@unique([senderId, receiverId])
+}
+
+enum ConnectionStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+
+
+
+model Activity {
+  id          String       @id @default(uuid())
+  type        ActivityType
+  message     String
+  isRead      Boolean      @default(false)
+  link        String?
+
+  // Ko je uzrokovao aktivnost
+  actorId     String?
+  actor       User?        @relation("ActivityActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  // Ko prima aktivnost
+  userId      String
+  user        User         @relation("ActivityReceiver", fields: [userId], references: [id], onDelete: Cascade)
+
+  // Referenca na povezani objekat
+  referenceId String?
+
+  createdAt   DateTime     @default(now())
+}
+
+enum ActivityType {
+  CONNECTION_REQUEST
+  CONNECTION_ACCEPTED
+  BOOKING_REQUEST
+  BOOKING_CONFIRMED
+  BOOKING_CANCELLED
+  SHOP_ITEM_INTEREST
+  COMMUNITY_COMMENT
+  INTERNSHIP_REVIEW
+  MATERIAL_DOWNLOAD
+  EVENT_REMINDER
+  GENERAL
+}
+
+
+model StudentJob {
+  id           String      @id @default(uuid())
+  title        String
+  description  String
+  type         JobType
+  category     JobCategory
+  location     String?
+  isRemote     Boolean     @default(false)
+  salary       Float?
+  salaryPeriod SalaryPeriod?
+  hours        String?
+  contactEmail String?
+  contactPhone String?
+  isActive     Boolean     @default(true)
+
+  authorId     String
+  author       User        @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+}
+
+enum JobType {
+  NUDIM    // nudim posao
+  TRAZIM   // tražim posao
+}
+
+enum JobCategory {
+  UGOSTITELJSTVO
+  TRGOVINA
+  ADMINISTRACIJA
+  IT
+  TUTORING
+  DOSTAVA
+  PROMOCIJA
+  FIZICKI_RAD
+  OSTALO
+}
+
+enum SalaryPeriod {
+  PO_SATU
+  PO_DANU
+  PO_MJESECU
+  DOGOVOR
+}
+
+
+
+
