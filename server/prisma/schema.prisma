@@ -62,6 +62,8 @@ model User {
   applications       InternshipApplication[]
 
   deletedAt   DateTime?
+  
+  adminLogs           AdminLog[]
 
   createdAt           DateTime           @default(now())
   updatedAt           DateTime           @updatedAt
@@ -700,4 +702,19 @@ model InternshipApplication {
   @@unique([internshipId, applicantId])
   @@index([applicantId])
   @@index([internshipId])
+}
+
+
+model AdminLog {
+  id         String   @id @default(uuid())
+  adminId    String
+  admin      User     @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  action     String
+  targetId   String?
+  targetType String?
+  details    String?
+  createdAt  DateTime @default(now())
+
+  @@index([adminId])
+  @@index([createdAt])
 }

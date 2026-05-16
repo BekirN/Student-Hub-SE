@@ -18,6 +18,7 @@ export default function Login() {
     try {
       const data = await login(formData)
       localStorage.setItem('token', data.token)
+      localStorage.setItem('refreshToken', data.refreshToken) 
       localStorage.setItem('user', JSON.stringify(data.user))
       initSocket()
 

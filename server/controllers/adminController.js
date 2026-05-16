@@ -1,6 +1,9 @@
 const prisma = require('../prisma/client')
 const { sendEmail } = require('../config/mailgun')
 
+const logAdminAction = (adminId, action, targetId = null, targetType = null, details = null) =>
+  prisma.adminLog.create({ data: { adminId, action, targetId, targetType, details } }).catch(() => {})
+
 // ─── STATISTIKE ───────────────────────────────────────────────────
 const getStats = async (req, res) => {
   try {
@@ -37,7 +40,6 @@ const getStats = async (req, res) => {
       }),
     ])
 
-    // Korisnici po danu (zadnjih 7 dana)
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
     const usersByDay = await prisma.user.groupBy({
       by: ['createdAt'],
@@ -125,6 +127,8 @@ const updateUserRole = async (req, res) => {
       select: { id: true, firstName: true, lastName: true, email: true, role: true }
     })
 
+    logAdminAction(req.user.userId, 'CHANGE_ROLE', req.params.id, 'USER', role)
+
     res.json({ message: `Rola promijenjena u ${role}`, user })
   } catch (error) {
     res.status(500).json({ message: 'Greška na serveru', error: error.message })
@@ -140,7 +144,6 @@ const assignCompanyMember = async (req, res) => {
       return res.status(400).json({ message: 'Neispravna rola' })
     }
 
-    // Provjeri da li već postoji membership
     const existing = await prisma.companyMember.findUnique({
       where: { userId_companyId: { userId, companyId } }
     })
@@ -165,6 +168,8 @@ const assignCompanyMember = async (req, res) => {
       })
     }
 
+    logAdminAction(req.user.userId, 'ASSIGN_COMPANY_MEMBER', userId, 'USER', `${role} @ ${companyId}`)
+
     res.json({
       message: `${member.user.firstName} dodan kao ${role} u ${member.company.name}!`,
       member
@@ -181,6 +186,8 @@ const removeCompanyMember = async (req, res) => {
     await prisma.companyMember.delete({
       where: { userId_companyId: { userId, companyId } }
     })
+
+    logAdminAction(req.user.userId, 'REMOVE_COMPANY_MEMBER', userId, 'USER', companyId)
 
     res.json({ message: 'Membership uklonjen!' })
   } catch (error) {
@@ -215,6 +222,8 @@ const deleteUser = async (req, res) => {
     }
 
     await prisma.user.update({ where: { id: req.params.id }, data: { deletedAt: new Date() } })
+
+    logAdminAction(req.user.userId, 'DELETE_USER', req.params.id, 'USER')
 
     res.json({ message: 'Korisnik obrisan!' })
   } catch (error) {
@@ -252,7 +261,7 @@ const deleteContent = async (req, res) => {
       post: () => softDelete(prisma.communityPost),
       material: () => softDelete(prisma.material),
       internship: () => softDelete(prisma.internship),
-      booking: () => prisma.tutorBooking.delete({ where: { id } }), 
+      booking: () => prisma.tutorBooking.delete({ where: { id } }),
     }
 
     if (!modelMap[type]) {
@@ -260,6 +269,9 @@ const deleteContent = async (req, res) => {
     }
 
     await modelMap[type]()
+
+    logAdminAction(req.user.userId, 'DELETE_CONTENT', id, type.toUpperCase())
+
     res.json({ message: 'Sadržaj obrisan!' })
   } catch (error) {
     res.status(500).json({ message: 'Greška na serveru', error: error.message })
@@ -286,7 +298,6 @@ const sendBroadcastEmail = async (req, res) => {
 
     console.log(`Broadcast: šaljem na ${users.length} korisnika`)
 
-    // Koristi sendEmail iz mailgun.js koji je zapravo Resend
     const { Resend } = require('resend')
     const resend = new Resend(process.env.RESEND_API_KEY)
 
@@ -364,7 +375,6 @@ const sendBroadcastEmail = async (req, res) => {
         }
       })
 
-      // Pauza između batch-eva da ne prekoračimo rate limit
       if (i + batchSize < users.length) {
         await new Promise(resolve => setTimeout(resolve, 500))
       }
@@ -458,12 +468,11 @@ const getAllContent = async (req, res) => {
   }
 }
 
-// Dohvati pending verifikacije
+// ─── VERIFIKACIJE ─────────────────────────────────────────────────
 const getPendingVerifications = async (req, res) => {
   try {
     console.log('=== getPendingVerifications ===')
 
-    // Provjeri sve korisnike i njihove statuse
     const allUsers = await prisma.user.findMany({
       where: { deletedAt: null },
       select: { id: true, firstName: true, verificationStatus: true, indexImage: true }
@@ -492,10 +501,10 @@ const getPendingVerifications = async (req, res) => {
     res.status(500).json({ message: 'Greška na serveru', error: error.message })
   }
 }
-// Odobri ili odbij verifikaciju
+
 const reviewVerification = async (req, res) => {
   try {
-    const { action, note } = req.body // action: 'approve' | 'reject'
+    const { action, note } = req.body
     const { id } = req.params
 
     if (!['approve', 'reject'].includes(action)) {
@@ -509,16 +518,22 @@ const reviewVerification = async (req, res) => {
       data: {
         verificationStatus: newStatus,
         verificationNote: note || null,
-        // Resetuj indexImage ako odbijen
         ...(action === 'reject' && { indexImage: null }),
       },
       select: { id: true, firstName: true, lastName: true, email: true }
     })
 
-    // Aktivnost za korisnika
+    logAdminAction(
+      req.user.userId,
+      action === 'approve' ? 'VERIFY_APPROVE' : 'VERIFY_REJECT',
+      id,
+      'USER',
+      note || null
+    )
+
     await prisma.activity.create({
       data: {
-        type: action === 'approve' ? 'GENERAL' : 'GENERAL',
+        type: 'GENERAL',
         message: action === 'approve'
           ? '🎉 Tvoj student status je verifikovan! Dobio/la si verifikacijski badge.'
           : `❌ Tvoj zahtjev za verifikaciju je odbijen.${note ? ` Razlog: ${note}` : ''}`,
@@ -529,7 +544,6 @@ const reviewVerification = async (req, res) => {
       }
     })
 
-    // Socket notifikacija korisniku
     try {
       const { io } = require('../index')
       io.to(`user_${id}`).emit('new_activity', {
@@ -543,7 +557,6 @@ const reviewVerification = async (req, res) => {
       console.error('Socket greška:', socketErr.message)
     }
 
-    // Email korisniku
     try {
       const { sendVerificationResultEmail } = require('../config/mailgun')
       await sendVerificationResultEmail(
@@ -559,9 +572,26 @@ const reviewVerification = async (req, res) => {
   }
 }
 
+// ─── ADMIN AUDIT LOG ──────────────────────────────────────────────
+const getAdminLogs = async (req, res) => {
+  try {
+    const logs = await prisma.adminLog.findMany({
+      include: {
+        admin: { select: { firstName: true, lastName: true, email: true } }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    })
+    res.json(logs)
+  } catch (error) {
+    res.status(500).json({ message: 'Greška na serveru', error: error.message })
+  }
+}
+
 module.exports = {
   getStats, getUsers, updateUserRole, deleteUser, verifyUser,
   deleteContent, sendBroadcastEmail, sendSystemNotification,
   getAllContent, getPendingVerifications, reviewVerification,
-  assignCompanyMember, removeCompanyMember, getCompaniesForAdmin, 
+  assignCompanyMember, removeCompanyMember, getCompaniesForAdmin,
+  getAdminLogs,
 }

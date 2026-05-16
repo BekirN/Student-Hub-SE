@@ -2,7 +2,6 @@ const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
 const prisma = require('../prisma/client')
 
-// Student email domeni - whitelist za auto-verifikaciju
 const STUDENT_EMAIL_DOMAINS = [
   'student.unsa.ba',
   'etf.unsa.ba',
@@ -16,16 +15,31 @@ const isStudentEmail = (email) => {
   const domain = email.split('@')[1]
   return STUDENT_EMAIL_DOMAINS.includes(domain)
 }
+
 const {
   sendVerificationEmail,
   sendWelcomeEmail,
 } = require('../config/mailgun')
 
-// Helper za generisanje koda
 const generateVerificationCode = () => {
   return Math.floor(100000 + Math.random() * 900000).toString()
 }
-// REGISTER
+
+const generateTokens = (user) => {
+  const token = jwt.sign(
+    { userId: user.id, email: user.email, role: user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: '1h' }
+  )
+  const refreshToken = jwt.sign(
+    { userId: user.id },
+    process.env.JWT_REFRESH_SECRET,
+    { expiresIn: '30d' }
+  )
+  return { token, refreshToken }
+}
+
+// ─── REGISTER ─────────────────────────────────────────────────────
 const register = async (req, res) => {
   try {
     const { firstName, lastName, email, password, university, faculty, yearOfStudy } = req.body
@@ -57,24 +71,19 @@ const register = async (req, res) => {
       }
     })
 
-    // Pokušaj poslati email – ako ne uspije, nije problem za registraciju
     try {
       await sendVerificationEmail(email, firstName, code)
       console.log(`Verifikacijski email poslan na ${email}`)
     } catch (emailErr) {
       console.error('Email greška:', emailErr.message)
-      // Nastavi registraciju čak i ako email ne stigne
     }
 
-    const token = jwt.sign(
-      { userId: user.id, email: user.email },
-      process.env.JWT_SECRET,
-      { expiresIn: '30d' }
-    )
+    const { token, refreshToken } = generateTokens(user)
 
     res.status(201).json({
       message: 'Registracija uspješna! Provjeri email za verifikacijski kod.',
       token,
+      refreshToken,
       user: {
         id: user.id,
         firstName: user.firstName,
@@ -94,6 +103,8 @@ const register = async (req, res) => {
     res.status(500).json({ message: 'Greška na serveru', error: error.message })
   }
 }
+
+// ─── VERIFY EMAIL ─────────────────────────────────────────────────
 const verifyEmail = async (req, res) => {
   try {
     const { code } = req.body
@@ -125,7 +136,6 @@ const verifyEmail = async (req, res) => {
       return res.status(400).json({ message: 'Pogrešan verifikacijski kod' })
     }
 
-    // Verifikuj email
     await prisma.user.update({
       where: { id: userId },
       data: {
@@ -135,7 +145,6 @@ const verifyEmail = async (req, res) => {
       }
     })
 
-    // Pošalji welcome email
     try {
       await sendWelcomeEmail(user.email, user.firstName)
     } catch (emailErr) {
@@ -148,6 +157,7 @@ const verifyEmail = async (req, res) => {
   }
 }
 
+// ─── RESEND VERIFICATION ──────────────────────────────────────────
 const resendVerificationCode = async (req, res) => {
   try {
     const userId = req.user.userId
@@ -172,33 +182,28 @@ const resendVerificationCode = async (req, res) => {
   }
 }
 
-// LOGIN
+// ─── LOGIN ────────────────────────────────────────────────────────
 const login = async (req, res) => {
   try {
     const { email, password } = req.body
 
-    // Pronađi korisnika
-    const user = await prisma.user.findUnique({ where: { email } })
+    const user = await prisma.user.findUnique({ where: { email, deletedAt: null } })
+
     if (!user) {
       return res.status(400).json({ message: 'Pogrešan email ili password' })
     }
 
-    // Provjeri password
     const isValidPassword = await bcrypt.compare(password, user.password)
     if (!isValidPassword) {
       return res.status(400).json({ message: 'Pogrešan email ili password' })
     }
 
-    // Kreiraj token
-    const token = jwt.sign(
-      { userId: user.id, email: user.email, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
-    )
+    const { token, refreshToken } = generateTokens(user)
 
     res.json({
       message: 'Prijava uspješna!',
       token,
+      refreshToken,
       user: {
         id: user.id,
         email: user.email,
@@ -209,14 +214,42 @@ const login = async (req, res) => {
         emailVerified: user.emailVerified,
       }
     })
-
   } catch (error) {
     console.error(error)
     res.status(500).json({ message: 'Greška na serveru', error: error.message })
   }
 }
 
-// GET trenutnog korisnika
+// ─── REFRESH TOKEN ────────────────────────────────────────────────
+const refreshToken = async (req, res) => {
+  try {
+    const { refreshToken } = req.body
+    if (!refreshToken) {
+      return res.status(401).json({ message: 'Refresh token nije pronađen' })
+    }
+
+    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET)
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId, deletedAt: null }
+    })
+    if (!user) {
+      return res.status(401).json({ message: 'Korisnik nije pronađen' })
+    }
+
+    const newToken = jwt.sign(
+      { userId: user.id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '1h' }
+    )
+
+    res.json({ token: newToken })
+  } catch (error) {
+    return res.status(401).json({ message: 'Refresh token nije validan' })
+  }
+}
+
+// ─── GET ME ───────────────────────────────────────────────────────
 const getMe = async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
@@ -239,7 +272,8 @@ const getMe = async (req, res) => {
     res.status(500).json({ message: 'Greška na serveru' })
   }
 }
-// Dohvati profil korisnika po ID-u
+
+// ─── GET USER PROFILE ─────────────────────────────────────────────
 const getUserProfile = async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
@@ -255,14 +289,14 @@ const getUserProfile = async (req, res) => {
         profileImage: true,
         bio: true,
         verificationStatus: true,
-        verificationNote: true,     
-        emailVerified: true,  
+        verificationNote: true,
+        emailVerified: true,
         role: true,
         createdAt: true,
         _count: {
           select: {
             shopItems: true,
-            uploadedMaterials: true,  // ← nova relacija
+            uploadedMaterials: true,
             communityPosts: true,
           }
         }
@@ -280,7 +314,7 @@ const getUserProfile = async (req, res) => {
   }
 }
 
-// Ažuriraj vlastiti profil
+// ─── UPDATE PROFILE ───────────────────────────────────────────────
 const updateProfile = async (req, res) => {
   try {
     const { firstName, lastName, university, faculty, yearOfStudy, bio } = req.body
@@ -316,7 +350,7 @@ const updateProfile = async (req, res) => {
   }
 }
 
-// Upload profilne slike
+// ─── UPDATE PROFILE IMAGE ─────────────────────────────────────────
 const updateProfileImage = async (req, res) => {
   try {
     const cloudinary = require('../config/cloudinary')
@@ -343,7 +377,7 @@ const updateProfileImage = async (req, res) => {
   }
 }
 
-// Search korisnika
+// ─── SEARCH USERS ─────────────────────────────────────────────────
 const searchUsers = async (req, res) => {
   try {
     const { q } = req.query
@@ -377,6 +411,7 @@ const searchUsers = async (req, res) => {
   }
 }
 
+// ─── UPLOAD INDEX IMAGE ───────────────────────────────────────────
 const uploadIndexImage = async (req, res) => {
   try {
     console.log('=== uploadIndexImage ===')
@@ -420,7 +455,6 @@ const uploadIndexImage = async (req, res) => {
 
     console.log('User ažuriran:', updated.verificationStatus, updated.indexImage)
 
-    // Notifikacija adminima
     const admins = await prisma.user.findMany({
       where: { role: 'ADMIN' },
       select: { id: true }
@@ -465,5 +499,8 @@ const uploadIndexImage = async (req, res) => {
   }
 }
 
-module.exports = { register, login, getMe, getUserProfile, updateProfile, updateProfileImage, searchUsers, verifyEmail,
-  resendVerificationCode,uploadIndexImage, }
+module.exports = {
+  register, login, refreshToken,
+  getMe, getUserProfile, updateProfile, updateProfileImage,
+  searchUsers, verifyEmail, resendVerificationCode, uploadIndexImage,
+}

@@ -4,7 +4,7 @@ const multer = require('multer')
 const {
   register, login, getMe,
   getUserProfile, updateProfile,
-  updateProfileImage, searchUsers
+  updateProfileImage, searchUsers, refreshToken
 } = require('../controllers/authController')
 const { protect } = require('../middleware/auth')
 const { verifyEmail, resendVerificationCode, uploadIndexImage} = require('../controllers/authController')
@@ -24,4 +24,6 @@ router.post('/resend-verification', protect, resendVerificationCode)
 router.post('/upload-index', protect, upload.single('indexImage'), uploadIndexImage)
 router.get('/verifications', protect, isAdmin, getPendingVerifications)
 router.put('/verifications/:id', protect, isAdmin, reviewVerification)
+router.post('/refresh', refreshToken)
+
 module.exports = router
