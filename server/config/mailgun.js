@@ -379,6 +379,33 @@ const sendVerificationResultEmail = async (to, firstName, approved, note) => {
     html
   )
 }
+const sendPasswordResetEmail = async (to, firstName, resetUrl) => {
+  const html = emailTemplate(`
+    <h1 style="font-size:28px;font-weight:900;color:#1C1C1E;margin:0 0 8px 0;">
+      Reset passworda 🔐
+    </h1>
+    <p style="color:#7A7570;font-size:16px;margin:0 0 28px 0;line-height:1.5;">
+      Zdravo <strong style="color:#1C1C1E;">${firstName}</strong>! 
+      Primili smo zahtjev za reset passworda tvog naloga.
+    </p>
+
+    <div style="text-align:center;margin:0 0 28px 0;">
+      <a href="${resetUrl}" style="
+        display:inline-block;background:linear-gradient(135deg,#FF6B35,#FFB800);
+        color:white;font-weight:800;font-size:15px;padding:14px 36px;border-radius:14px;text-decoration:none;
+      ">Resetuj password →</a>
+    </div>
+
+    <div style="background:#F0EDE8;border-radius:12px;padding:16px;">
+      <p style="color:#7A7570;font-size:13px;margin:0;line-height:1.6;">
+        ⏰ Link vrijedi <strong style="color:#1C1C1E;">15 minuta</strong>.<br>
+        🔒 Ako nisi ti zatražio/la reset, ignoriši ovaj email — tvoj nalog je siguran.
+      </p>
+    </div>
+  `)
+
+  return sendEmail(to, 'Reset passworda za KOLEGA', html)
+}
 
 module.exports = {
   sendVerificationEmail,
@@ -388,4 +415,5 @@ module.exports = {
   sendBookingConfirmationEmail,
   sendBookingCancelledEmail,
   sendVerificationResultEmail,
+  sendPasswordResetEmail,
 }

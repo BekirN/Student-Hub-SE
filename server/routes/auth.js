@@ -2,28 +2,36 @@ const express = require('express')
 const router = express.Router()
 const multer = require('multer')
 const {
-  register, login, getMe,
-  getUserProfile, updateProfile,
-  updateProfileImage, searchUsers, refreshToken
+  register, login, logout, refreshToken,
+  forgotPassword, resetPassword,
+  getMe, getUserProfile, updateProfile,
+  updateProfileImage, searchUsers,
+  verifyEmail, resendVerificationCode, uploadIndexImage,
 } = require('../controllers/authController')
 const { protect } = require('../middleware/auth')
-const { verifyEmail, resendVerificationCode, uploadIndexImage} = require('../controllers/authController')
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
 const { getPendingVerifications, reviewVerification } = require('../controllers/adminController')
 const { isAdmin } = require('../middleware/admin')
 
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
+
 router.post('/register', register)
 router.post('/login', login)
+router.post('/logout', protect, logout)
+router.post('/refresh', refreshToken)
+router.post('/forgot-password', forgotPassword)
+router.post('/reset-password', resetPassword)
+
 router.get('/me', protect, getMe)
 router.get('/search', protect, searchUsers)
 router.get('/profile/:id', getUserProfile)
 router.put('/profile', protect, updateProfile)
 router.put('/profile/image', protect, upload.single('image'), updateProfileImage)
+
 router.post('/verify-email', protect, verifyEmail)
 router.post('/resend-verification', protect, resendVerificationCode)
 router.post('/upload-index', protect, upload.single('indexImage'), uploadIndexImage)
+
 router.get('/verifications', protect, isAdmin, getPendingVerifications)
 router.put('/verifications/:id', protect, isAdmin, reviewVerification)
-router.post('/refresh', refreshToken)
 
 module.exports = router

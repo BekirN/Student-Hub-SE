@@ -29,7 +29,8 @@ import Admin from './pages/Admin'
 import MyApplications from './pages/MyApplications'
 import CompanyApplications from './pages/CompanyApplications'
 import ErrorBoundary from './components/ErrorBoundary'
-
+import ForgotPassword from './pages/ForgotPassword'
+import ResetPassword from './pages/ResetPassword'
 import { initSocket, disconnectSocket } from './services/socket'
 const PublicRoute = ({ children }) => {
   const token = localStorage.getItem('token')
@@ -89,6 +90,8 @@ function App() {
           <Route path="/companies/my-applications" element={<PrivateRoute><MyApplications /></PrivateRoute>} />
           <Route path="/companies/:companyId/applications" element={<PrivateRoute><CompanyApplications /></PrivateRoute>} />
           <Route path="/companies/:id" element={<PrivateRoute><CompanyDetail /></PrivateRoute>} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
         </Routes>
         </ErrorBoundary>
       </NotificationProvider>

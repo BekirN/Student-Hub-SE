@@ -62,7 +62,9 @@ model User {
   applications       InternshipApplication[]
 
   deletedAt   DateTime?
-  
+  refreshToken          String?
+  resetPasswordToken    String?
+  resetPasswordTokenExp DateTime?
   adminLogs           AdminLog[]
 
   createdAt           DateTime           @default(now())

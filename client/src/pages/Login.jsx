@@ -157,6 +157,12 @@ export default function Login() {
             >
               {loading ? 'Prijava...' : 'Prijavi se'}
             </button>
+            <p className="text-center text-sm text-gray-500 mt-3">
+              <Link to="/forgot-password" className="hover:opacity-80 transition" style={{ color: '#FF6B35' }}>
+                Zaboravljen password?
+              </Link>
+            </p>
+
           </form>
 
           <p className="text-center text-sm text-gray-500 mt-6">

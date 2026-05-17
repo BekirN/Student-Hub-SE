@@ -18,6 +18,8 @@ const adminRoutes = require('./routes/admin')
 const internshipRoutes = require('./routes/internships')
 const rateLimit = require('express-rate-limit')
 const app = express()
+app.use(require('helmet')())
+
 const server = http.createServer(app)
 
 const connectionRoutes = require('./routes/connections')

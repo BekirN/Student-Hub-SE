@@ -1,5 +1,6 @@
 const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
+const crypto = require('crypto')
 const prisma = require('../prisma/client')
 
 const STUDENT_EMAIL_DOMAINS = [
@@ -19,6 +20,7 @@ const isStudentEmail = (email) => {
 const {
   sendVerificationEmail,
   sendWelcomeEmail,
+  sendPasswordResetEmail,
 } = require('../config/mailgun')
 
 const generateVerificationCode = () => {
@@ -79,6 +81,11 @@ const register = async (req, res) => {
     }
 
     const { token, refreshToken } = generateTokens(user)
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { refreshToken }
+    })
 
     res.status(201).json({
       message: 'Registracija uspješna! Provjeri email za verifikacijski kod.',
@@ -188,7 +195,6 @@ const login = async (req, res) => {
     const { email, password } = req.body
 
     const user = await prisma.user.findUnique({ where: { email, deletedAt: null } })
-
     if (!user) {
       return res.status(400).json({ message: 'Pogrešan email ili password' })
     }
@@ -199,6 +205,11 @@ const login = async (req, res) => {
     }
 
     const { token, refreshToken } = generateTokens(user)
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { refreshToken }
+    })
 
     res.json({
       message: 'Prijava uspješna!',
@@ -220,6 +231,19 @@ const login = async (req, res) => {
   }
 }
 
+// ─── LOGOUT ───────────────────────────────────────────────────────
+const logout = async (req, res) => {
+  try {
+    await prisma.user.update({
+      where: { id: req.user.userId },
+      data: { refreshToken: null }
+    })
+    res.json({ message: 'Odjava uspješna!' })
+  } catch (error) {
+    res.status(500).json({ message: 'Greška na serveru', error: error.message })
+  }
+}
+
 // ─── REFRESH TOKEN ────────────────────────────────────────────────
 const refreshToken = async (req, res) => {
   try {
@@ -233,8 +257,9 @@ const refreshToken = async (req, res) => {
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId, deletedAt: null }
     })
-    if (!user) {
-      return res.status(401).json({ message: 'Korisnik nije pronađen' })
+
+    if (!user || user.refreshToken !== refreshToken) {
+      return res.status(401).json({ message: 'Refresh token nije validan' })
     }
 
     const newToken = jwt.sign(
@@ -249,22 +274,104 @@ const refreshToken = async (req, res) => {
   }
 }
 
+// ─── FORGOT PASSWORD ──────────────────────────────────────────────
+const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body
+    if (!email) return res.status(400).json({ message: 'Email je obavezan' })
+
+    const user = await prisma.user.findUnique({ where: { email, deletedAt: null } })
+
+    // Uvijek vrati isti odgovor da ne otkrijemo postoji li email
+    if (!user) {
+      return res.json({ message: 'Ako email postoji, poslan je link za reset.' })
+    }
+
+    const resetToken = crypto.randomBytes(32).toString('hex')
+    const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex')
+    const expiry = new Date(Date.now() + 15 * 60 * 1000)
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        resetPasswordToken: hashedToken,
+        resetPasswordTokenExp: expiry,
+      }
+    })
+
+    const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/reset-password?token=${resetToken}`
+
+    try {
+      await sendPasswordResetEmail(user.email, user.firstName, resetUrl)
+    } catch (emailErr) {
+      console.error('Reset email greška:', emailErr.message)
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { resetPasswordToken: null, resetPasswordTokenExp: null }
+      })
+      return res.status(500).json({ message: 'Greška pri slanju emaila, pokušaj ponovo.' })
+    }
+
+    res.json({ message: 'Ako email postoji, poslan je link za reset.' })
+  } catch (error) {
+    res.status(500).json({ message: 'Greška na serveru', error: error.message })
+  }
+}
+
+// ─── RESET PASSWORD ───────────────────────────────────────────────
+const resetPassword = async (req, res) => {
+  try {
+    const { token, password } = req.body
+
+    if (!token || !password) {
+      return res.status(400).json({ message: 'Token i novi password su obavezni' })
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ message: 'Password mora imati najmanje 6 karaktera' })
+    }
+
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex')
+
+    const user = await prisma.user.findFirst({
+      where: {
+        resetPasswordToken: hashedToken,
+        resetPasswordTokenExp: { gt: new Date() },
+        deletedAt: null,
+      }
+    })
+
+    if (!user) {
+      return res.status(400).json({ message: 'Token nije validan ili je istekao' })
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 12)
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        password: hashedPassword,
+        resetPasswordToken: null,
+        resetPasswordTokenExp: null,
+        refreshToken: null,
+      }
+    })
+
+    res.json({ message: 'Password uspješno resetovan! Prijavi se sa novim passwordom.' })
+  } catch (error) {
+    res.status(500).json({ message: 'Greška na serveru', error: error.message })
+  }
+}
+
 // ─── GET ME ───────────────────────────────────────────────────────
 const getMe = async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user.userId },
       select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        university: true,
-        faculty: true,
-        yearOfStudy: true,
-        verificationStatus: true,
-        role: true,
-        createdAt: true,
+        id: true, email: true, firstName: true, lastName: true,
+        university: true, faculty: true, yearOfStudy: true,
+        verificationStatus: true, role: true, createdAt: true,
       }
     })
     res.json(user)
@@ -279,20 +386,10 @@ const getUserProfile = async (req, res) => {
     const user = await prisma.user.findUnique({
       where: { id: req.params.id },
       select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        email: true,
-        university: true,
-        faculty: true,
-        yearOfStudy: true,
-        profileImage: true,
-        bio: true,
-        verificationStatus: true,
-        verificationNote: true,
-        emailVerified: true,
-        role: true,
-        createdAt: true,
+        id: true, firstName: true, lastName: true, email: true,
+        university: true, faculty: true, yearOfStudy: true,
+        profileImage: true, bio: true, verificationStatus: true,
+        verificationNote: true, emailVerified: true, role: true, createdAt: true,
         _count: {
           select: {
             shopItems: true,
@@ -330,17 +427,9 @@ const updateProfile = async (req, res) => {
         ...(bio !== undefined && { bio }),
       },
       select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        university: true,
-        faculty: true,
-        yearOfStudy: true,
-        bio: true,
-        profileImage: true,
-        verificationStatus: true,
-        role: true,
+        id: true, email: true, firstName: true, lastName: true,
+        university: true, faculty: true, yearOfStudy: true,
+        bio: true, profileImage: true, verificationStatus: true, role: true,
       }
     })
 
@@ -394,13 +483,9 @@ const searchUsers = async (req, res) => {
         NOT: { id: req.user.userId }
       },
       select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        faculty: true,
-        university: true,
-        profileImage: true,
-        verificationStatus: true,
+        id: true, firstName: true, lastName: true,
+        faculty: true, university: true,
+        profileImage: true, verificationStatus: true,
       },
       take: 8
     })
@@ -415,8 +500,6 @@ const searchUsers = async (req, res) => {
 const uploadIndexImage = async (req, res) => {
   try {
     console.log('=== uploadIndexImage ===')
-    console.log('userId:', req.user.userId)
-
     const cloudinary = require('../config/cloudinary')
 
     if (!req.file) {
@@ -424,7 +507,6 @@ const uploadIndexImage = async (req, res) => {
     }
 
     const user = await prisma.user.findUnique({ where: { id: req.user.userId } })
-    console.log('Trenutni status:', user.verificationStatus)
 
     if (user.verificationStatus === 'VERIFIED') {
       return res.status(400).json({ message: 'Već ste verifikovani' })
@@ -442,8 +524,6 @@ const uploadIndexImage = async (req, res) => {
       stream.end(req.file.buffer)
     })
 
-    console.log('Cloudinary upload OK:', result.secure_url)
-
     const updated = await prisma.user.update({
       where: { id: req.user.userId },
       data: {
@@ -453,14 +533,10 @@ const uploadIndexImage = async (req, res) => {
       }
     })
 
-    console.log('User ažuriran:', updated.verificationStatus, updated.indexImage)
-
     const admins = await prisma.user.findMany({
       where: { role: 'ADMIN' },
       select: { id: true }
     })
-
-    console.log('Admini:', admins.length)
 
     if (admins.length > 0) {
       await prisma.activity.createMany({
@@ -500,7 +576,8 @@ const uploadIndexImage = async (req, res) => {
 }
 
 module.exports = {
-  register, login, refreshToken,
+  register, login, logout, refreshToken,
+  forgotPassword, resetPassword,
   getMe, getUserProfile, updateProfile, updateProfileImage,
   searchUsers, verifyEmail, resendVerificationCode, uploadIndexImage,
 }
